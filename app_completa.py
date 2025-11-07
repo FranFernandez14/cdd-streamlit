@@ -386,8 +386,7 @@ def pagina_datos():
         )
         .properties(
             title={
-                "text": "Perfil Musical por Artista",
-                "subtitle": "Valores normalizados de características musicales"
+                "text": "Perfil Musical por Artista"
             },
             width=800,
             height=450
@@ -484,8 +483,7 @@ def pagina_datos():
         )
         .properties(
             title={
-                "text": "Distribución de Canciones por Escala Musical",
-                "subtitle": f"Artista: {artist_filter_2} - Modo: {mode_filter}"
+                "text": "Distribución de Canciones por Escala Musical"
             },
             width=800,
             height=450
@@ -597,8 +595,7 @@ def pagina_datos():
         )
         .properties(
             title={
-                "text": f"Distribución de {feature_names_hist[feature_filter]}",
-                "subtitle": f"Artista: {artist_filter_3} (valores nulos y ceros excluidos)"
+                "text": f"Distribución de {feature_names_hist[feature_filter]}"
             },
             width=800,
             height=450
