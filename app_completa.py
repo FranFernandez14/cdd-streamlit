@@ -236,25 +236,6 @@ def pagina_predictor():
             
             st.success("Análisis completado")
             
-            st.subheader("Características Musicales")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric("Tonalidad", f"{key_mode_info['key_name']} {key_mode_info['mode_name']}")
-                st.metric("Tempo", f"{features_completas.get('tempo', 0):.1f} BPM")
-                st.metric("Energy", f"{features_completas.get('energy', 0):.3f}")
-            
-            with col2:
-                st.metric("Danceability", f"{features_completas.get('danceability', 0):.3f}")
-                st.metric("Valence", f"{features_completas.get('valence', 0):.3f}")
-                st.metric("Loudness", f"{features_completas.get('loudness', 0):.1f} dB")
-            
-            with col3:
-                st.metric("Acousticness", f"{features_completas.get('acousticness', 0):.3f}")
-                st.metric("Instrumentalness", f"{features_completas.get('instrumentalness', 0):.3f}")
-                st.metric("Speechiness", f"{features_completas.get('speechiness', 0):.3f}")
-            
             st.subheader("Predicción")
             
             try:
@@ -278,6 +259,128 @@ def pagina_predictor():
                     else:
                         with col_prob2:
                             st.write(f"- {artista}: {prob*100:.2f}%")
+                
+                # Gráfico de características normalizadas
+                st.subheader("Perfil de Características Musicales")
+                
+                # Características a visualizar
+                features_to_plot = ['acousticness', 'danceability', 'energy', 'instrumentalness', 
+                                   'speechiness', 'valence', 'liveness', 'loudness', 'tempo']
+                
+                # Nombres legibles
+                feature_names_plot = {
+                    'acousticness': 'Acústica',
+                    'danceability': 'Bailabilidad',
+                    'energy': 'Energía',
+                    'instrumentalness': 'Instrumental',
+                    'speechiness': 'Voz',
+                    'valence': 'Positividad',
+                    'liveness': 'En Vivo',
+                    'loudness': 'Volumen',
+                    'tempo': 'Tempo'
+                }
+                
+                # Preparar datos para el gráfico
+                plot_data = []
+                for feature in features_to_plot:
+                    if feature in features_completas:
+                        valor_real = features_completas[feature]
+                        
+                        # Normalizar según el tipo de característica
+                        if feature == 'loudness':
+                            # Loudness: -60 a 0 dB
+                            valor_norm = (valor_real + 60) / 60
+                        elif feature == 'tempo':
+                            # Tempo: normalizar entre 0 y 250 BPM
+                            valor_norm = min(valor_real / 250, 1.0)
+                        else:
+                            # Otras características ya están entre 0 y 1
+                            valor_norm = valor_real
+                        
+                        # Formatear valor real para el label
+                        if feature == 'loudness':
+                            valor_label = f"{valor_real:.1f} dB"
+                        elif feature == 'tempo':
+                            valor_label = f"{valor_real:.1f} BPM"
+                        else:
+                            valor_label = f"{valor_real:.3f}"
+                        
+                        plot_data.append({
+                            'Característica': feature_names_plot[feature],
+                            'Valor Normalizado': valor_norm,
+                            'Valor Real': valor_label
+                        })
+                
+                df_plot = pd.DataFrame(plot_data)
+                
+                # Crear gráfico de líneas con puntos
+                chart_features = (
+                    alt.Chart(df_plot)
+                    .mark_line(point=alt.OverlayMarkDef(size=100, filled=True), strokeWidth=3, color='#1f77b4')
+                    .encode(
+                        x=alt.X('Característica:N', 
+                               title='',
+                               sort=list(feature_names_plot.values()),
+                               axis=alt.Axis(labelAngle=-45, labelFontSize=12)),
+                        y=alt.Y('Valor Normalizado:Q', 
+                               title='Valor Normalizado (0-1)',
+                               scale=alt.Scale(domain=[0, 1]),
+                               axis=alt.Axis(grid=True, labelFontSize=12)),
+                        tooltip=[
+                            alt.Tooltip('Característica:N', title='Característica'),
+                            alt.Tooltip('Valor Real:N', title='Valor')
+                        ]
+                    )
+                )
+                
+                # Agregar etiquetas con valores reales
+                text_chart = (
+                    alt.Chart(df_plot)
+                    .mark_text(dy=-15, fontSize=11, fontWeight='bold')
+                    .encode(
+                        x=alt.X('Característica:N', sort=list(feature_names_plot.values())),
+                        y=alt.Y('Valor Normalizado:Q'),
+                        text='Valor Real:N'
+                    )
+                )
+                
+                # Combinar gráficos y aplicar configuración
+                final_chart = (
+                    (chart_features + text_chart)
+                    .properties(
+                        title='Perfil de características del audio analizado',
+                        width=800,
+                        height=400
+                    )
+                    .configure_axis(
+                        labelFontSize=12,
+                        titleFontSize=14
+                    )
+                    .configure_title(
+                        fontSize=16,
+                        anchor='start'
+                    )
+                )
+                
+                st.altair_chart(final_chart, use_container_width=True)
+                
+                # Información adicional debajo del gráfico
+                col_info1, col_info2, col_info3, col_info4 = st.columns(4)
+                
+                with col_info1:
+                    st.metric("Escala", features_completas.get('scale', 'N/A'))
+                
+                with col_info2:
+                    modo_nombre = "Mayor" if features_completas.get('mode', 1) == 1 else "Menor"
+                    st.metric("Modo", modo_nombre)
+                
+                with col_info3:
+                    key_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+                    key_value = features_completas.get('key', 0)
+                    st.metric("Tonalidad (Key)", key_names[int(key_value)])
+                
+                with col_info4:
+                    st.metric("Notas no naturales", int(features_completas.get('non_naturales_notes', 0)))
                 
                 # Análisis de la Predicción
                 st.subheader("Análisis de la Predicción")
@@ -454,9 +557,6 @@ def pagina_predictor():
                         
                     except Exception as e:
                         st.error(f"Error al generar el análisis: {e}")
-                
-                with st.expander("Ver todas las características"):
-                    st.dataframe(df_prediccion, use_container_width=True)
                     
             except Exception as e:
                 st.error(f"Error en la predicción: {e}")
