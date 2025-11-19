@@ -344,8 +344,19 @@ def pagina_predictor():
                         if len(df_scales) > 0:
                             df_scales['abs_shap'] = df_scales['SHAP Value'].abs()
                             top_scale = df_scales.nlargest(1, 'abs_shap')
-                            # Renombrar la escala más importante
-                            top_scale['Feature'] = top_scale['Feature'].str.replace('scale_', 'Escala ')
+                            
+                            # Obtener el nombre de la escala y verificar si está presente
+                            scale_feature_name = top_scale['Feature'].iloc[0]
+                            scale_col_idx = list(feature_names_transformed).index(scale_feature_name)
+                            scale_value = X_pred_transformed[0, scale_col_idx] if hasattr(X_pred_transformed, 'shape') else X_pred_transformed[0][scale_col_idx]
+                            
+                            # Renombrar según si está presente o no
+                            scale_name = scale_feature_name.replace('scale_', '')
+                            if scale_value == 1:
+                                top_scale['Feature'] = f"Escala {scale_name}"
+                            else:
+                                top_scale['Feature'] = f"NO Escala {scale_name}"
+                            
                             # Combinar con las no-escalas
                             df_shap_filtered = pd.concat([df_non_scales, top_scale], ignore_index=True)
                         else:
