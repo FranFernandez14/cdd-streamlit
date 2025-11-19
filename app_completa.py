@@ -313,18 +313,23 @@ def pagina_predictor():
                         else:
                             shap_vals = shap_values[0]
                         
+                        # Asegurar que shap_vals sea un array 1D
+                        shap_vals_flat = np.array(shap_vals).flatten()
+                        
                         # Obtener nombres de características después del preprocessing
                         if hasattr(modelo.named_steps['preprocessing'], 'get_feature_names_out'):
                             feature_names_transformed = list(modelo.named_steps['preprocessing'].get_feature_names_out())
                         else:
-                            feature_names_transformed = [f"feature_{i}" for i in range(len(shap_vals))]
+                            feature_names_transformed = [f"feature_{i}" for i in range(len(shap_vals_flat))]
                         
-                        # Asegurar que shap_vals sea un array 1D
-                        shap_vals_flat = np.array(shap_vals).flatten()
+                        # Asegurar que ambos arrays tengan la misma longitud
+                        min_len = min(len(feature_names_transformed), len(shap_vals_flat))
+                        feature_names_transformed = feature_names_transformed[:min_len]
+                        shap_vals_flat = shap_vals_flat[:min_len]
                         
                         # Crear DataFrame para el gráfico
                         df_shap = pd.DataFrame({
-                            'Feature': feature_names_transformed[:len(shap_vals_flat)],
+                            'Feature': feature_names_transformed,
                             'SHAP Value': shap_vals_flat
                         })
                         
