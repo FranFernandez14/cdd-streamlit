@@ -336,8 +336,20 @@ def pagina_predictor():
                         # Simplificar nombres de características
                         df_shap['Feature'] = df_shap['Feature'].str.replace('remainder__', '').str.replace('num__', '').str.replace('cat__', '')
                         
-                        # Mapear nombres de escalas (scale_X Mayor -> Escala X Mayor)
-                        df_shap['Feature'] = df_shap['Feature'].str.replace('scale_', 'Escala ')
+                        # Separar escalas de otras características
+                        df_scales = df_shap[df_shap['Feature'].str.contains('scale_', case=False, na=False)].copy()
+                        df_non_scales = df_shap[~df_shap['Feature'].str.contains('scale_', case=False, na=False)].copy()
+                        
+                        # Si hay escalas, tomar solo la más importante
+                        if len(df_scales) > 0:
+                            df_scales['abs_shap'] = df_scales['SHAP Value'].abs()
+                            top_scale = df_scales.nlargest(1, 'abs_shap')
+                            # Renombrar la escala más importante
+                            top_scale['Feature'] = top_scale['Feature'].str.replace('scale_', 'Escala ')
+                            # Combinar con las no-escalas
+                            df_shap_filtered = pd.concat([df_non_scales, top_scale], ignore_index=True)
+                        else:
+                            df_shap_filtered = df_non_scales.copy()
                         
                         # Mapear a nombres originales si es posible
                         feature_mapping = {
@@ -357,14 +369,14 @@ def pagina_predictor():
                         
                         # Aplicar mapeo
                         for orig, nuevo in feature_mapping.items():
-                            df_shap['Feature'] = df_shap['Feature'].str.replace(orig, nuevo, regex=False)
+                            df_shap_filtered['Feature'] = df_shap_filtered['Feature'].str.replace(orig, nuevo, regex=False)
                         
                         # Ordenar por valor absoluto
-                        df_shap['abs_shap'] = df_shap['SHAP Value'].abs()
-                        df_shap = df_shap.sort_values('abs_shap', ascending=True)
+                        df_shap_filtered['abs_shap'] = df_shap_filtered['SHAP Value'].abs()
+                        df_shap_filtered = df_shap_filtered.sort_values('abs_shap', ascending=True)
                         
                         # Limitar a top 10 características más importantes
-                        df_shap_top = df_shap.tail(10).copy()
+                        df_shap_top = df_shap_filtered.tail(10).copy()
                         
                         # Crear etiqueta de impacto
                         df_shap_top['Impacto'] = df_shap_top['SHAP Value'].apply(
