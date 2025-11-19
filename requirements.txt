@@ -9,6 +9,5 @@ librosa
 altair
 vl-convert-python
 vega_datasets
-audio-recorder-streamlitlime
-
+audio-recorder-streamlit
 shap
