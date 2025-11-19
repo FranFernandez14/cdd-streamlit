@@ -260,8 +260,169 @@ def pagina_predictor():
             try:
                 df_prediccion = crear_dataframe_prediccion(features_completas, columnas_modelo)
                 prediccion = modelo.predict(df_prediccion)[0]
+                probabilidades = modelo.predict_proba(df_prediccion)[0]
                 
                 st.markdown(f"### Artista Predicho: **{prediccion}**")
+                
+                # Mostrar probabilidades
+                clases = modelo.classes_
+                prob_dict = dict(zip(clases, probabilidades))
+                prob_sorted = sorted(prob_dict.items(), key=lambda x: x[1], reverse=True)
+                
+                st.write("**Probabilidades:**")
+                col_prob1, col_prob2 = st.columns(2)
+                for i, (artista, prob) in enumerate(prob_sorted):
+                    if i < len(prob_sorted) // 2:
+                        with col_prob1:
+                            st.write(f"- {artista}: {prob*100:.2f}%")
+                    else:
+                        with col_prob2:
+                            st.write(f"- {artista}: {prob*100:.2f}%")
+                
+                # Análisis de la Predicción
+                st.subheader("Análisis de la Predicción")
+                
+                # Cargar dataset para el análisis
+                df_dataset = cargar_dataset()
+                if df_dataset is not None:
+                    try:
+                        import shap
+                        
+                        # Extraer el modelo del Pipeline
+                        if hasattr(modelo, 'named_steps'):
+                            # Es un Pipeline, extraer el modelo
+                            actual_model = modelo.named_steps['model']
+                            # Transformar los datos usando el preprocessing del pipeline
+                            X_pred_transformed = modelo.named_steps['preprocessing'].transform(df_prediccion)
+                        else:
+                            actual_model = modelo
+                            X_pred_transformed = df_prediccion.values
+                        
+                        # Crear explicador SHAP
+                        explainer_shap = shap.TreeExplainer(actual_model)
+                        
+                        # Calcular valores SHAP
+                        shap_values = explainer_shap.shap_values(X_pred_transformed)
+                        
+                        # Obtener el índice de la clase predicha
+                        pred_idx = list(clases).index(prediccion)
+                        
+                        # Si shap_values es una lista (multiclase), tomar la clase predicha
+                        if isinstance(shap_values, list):
+                            shap_vals = shap_values[pred_idx][0]
+                        else:
+                            shap_vals = shap_values[0]
+                        
+                        # Obtener nombres de características después del preprocessing
+                        if hasattr(modelo.named_steps['preprocessing'], 'get_feature_names_out'):
+                            feature_names_transformed = modelo.named_steps['preprocessing'].get_feature_names_out()
+                        else:
+                            feature_names_transformed = [f"feature_{i}" for i in range(len(shap_vals))]
+                        
+                        # Crear DataFrame para el gráfico
+                        df_shap = pd.DataFrame({
+                            'Feature': feature_names_transformed[:len(shap_vals)],
+                            'SHAP Value': shap_vals
+                        })
+                        
+                        # Simplificar nombres de características
+                        df_shap['Feature'] = df_shap['Feature'].str.replace('remainder__', '').str.replace('num__', '').str.replace('cat__', '')
+                        
+                        # Mapear nombres de escalas (scale_X Mayor -> Escala X Mayor)
+                        df_shap['Feature'] = df_shap['Feature'].str.replace('scale_', 'Escala ')
+                        
+                        # Mapear a nombres originales si es posible
+                        feature_mapping = {
+                            'acousticness': 'Acústica',
+                            'danceability': 'Bailabilidad',
+                            'energy': 'Energía',
+                            'instrumentalness': 'Instrumental',
+                            'speechiness': 'Voz',
+                            'valence': 'Positividad',
+                            'liveness': 'En Vivo',
+                            'loudness': 'Volumen',
+                            'tempo': 'Tempo',
+                            'key': 'Tonalidad',
+                            'mode': 'Modo',
+                            'non_naturales_notes': 'Notas no naturales'
+                        }
+                        
+                        # Aplicar mapeo
+                        for orig, nuevo in feature_mapping.items():
+                            df_shap['Feature'] = df_shap['Feature'].str.replace(orig, nuevo, regex=False)
+                        
+                        # Ordenar por valor absoluto
+                        df_shap['abs_shap'] = df_shap['SHAP Value'].abs()
+                        df_shap = df_shap.sort_values('abs_shap', ascending=True)
+                        
+                        # Limitar a top 10 características más importantes
+                        df_shap_top = df_shap.tail(10).copy()
+                        
+                        # Crear etiqueta de impacto
+                        df_shap_top['Impacto'] = df_shap_top['SHAP Value'].apply(
+                            lambda x: 'Aumenta probabilidad' if x > 0 else 'Disminuye probabilidad'
+                        )
+                        
+                        # Crear gráfico con Altair más explicativo
+                        chart_shap = (
+                            alt.Chart(df_shap_top)
+                            .mark_bar(size=25)
+                            .encode(
+                                x=alt.X('SHAP Value:Q', 
+                                       title='Impacto en la Predicción',
+                                       axis=alt.Axis(grid=True)),
+                                y=alt.Y('Feature:N', 
+                                       title='Característica Musical',
+                                       sort=None,
+                                       axis=alt.Axis(labelLimit=200)),
+                                color=alt.Color('Impacto:N',
+                                               scale=alt.Scale(
+                                                   domain=['Aumenta probabilidad', 'Disminuye probabilidad'],
+                                                   range=['#2ca02c', '#d62728']
+                                               ),
+                                               legend=alt.Legend(title='Efecto')),
+                                tooltip=[
+                                    alt.Tooltip('Feature:N', title='Característica'),
+                                    alt.Tooltip('SHAP Value:Q', title='Impacto', format='.4f'),
+                                    alt.Tooltip('Impacto:N', title='Efecto')
+                                ]
+                            )
+                            .properties(
+                                title={
+                                    "text": f"¿Por qué se predijo {prediccion}?",
+                                    "subtitle": "Top 10 características que más influyeron en la decisión"
+                                },
+                                width=700,
+                                height=450
+                            )
+                            .configure_axis(
+                                labelFontSize=12,
+                                titleFontSize=14
+                            )
+                            .configure_title(
+                                fontSize=16,
+                                anchor='start'
+                            )
+                        )
+                        
+                        st.altair_chart(chart_shap, use_container_width=True)
+                        
+                        # Explicación profesional
+                        st.markdown("""
+                        **Interpretación del análisis:**
+                        - **Verde**: Características que aumentan la probabilidad de la predicción
+                        - **Rojo**: Características que disminuyen la probabilidad de la predicción
+                        - **Magnitud de las barras**: Indica el nivel de impacto en la decisión del modelo
+                        """)
+                        
+                        # Mostrar resumen de las características más importantes
+                        top_3 = df_shap_top.tail(3)
+                        st.write("**Características más influyentes:**")
+                        for idx, row in top_3.iloc[::-1].iterrows():
+                            st.write(f"• **{row['Feature']}**: {row['Impacto']} (impacto: {abs(row['SHAP Value']):.4f})")
+                        
+                    except Exception as e:
+                        st.error(f"Error al generar el análisis: {e}")
                 
                 with st.expander("Ver todas las características"):
                     st.dataframe(df_prediccion, use_container_width=True)
@@ -279,9 +440,6 @@ def pagina_datos():
         st.error("No se pudo cargar el dataset.")
         return
     
-    st.write(f"**Total de canciones:** {len(df)}")
-    st.write(f"**Total de artistas:** {df['artist_name'].nunique()}")
-    
     # Definir colores específicos para cada artista
     artist_colors = {
         'Todos los artistas': '#17becf',  # Turquesa/Cyan vibrante
@@ -293,6 +451,66 @@ def pagina_datos():
         'Metallica': '#2ca02c',  # Verde
         'One Direction': '#bcbd22',  # Amarillo verdoso
     }
+    
+    # Estadísticas básicas
+    st.write(f"**Total de canciones:** {len(df)} | **Total de artistas:** {df['artist_name'].nunique()}")
+    st.write("")
+    
+    # Preparar datos para el gráfico de torta
+    artist_distribution = df['artist_name'].value_counts().reset_index()
+    artist_distribution.columns = ['artist_name', 'count']
+    artist_distribution['percentage'] = (artist_distribution['count'] / len(df) * 100).round(1)
+    
+    # Crear etiqueta con nombre, conteo y porcentaje
+    artist_distribution['label'] = artist_distribution.apply(
+        lambda row: f"{row['artist_name']}: {row['count']} ({row['percentage']}%)", 
+        axis=1
+    )
+    
+    # Crear gráfico de torta más grande
+    pie_chart = (
+        alt.Chart(artist_distribution)
+        .mark_arc(innerRadius=80, outerRadius=200)
+        .encode(
+            theta=alt.Theta('count:Q', stack=True),
+            color=alt.Color('artist_name:N',
+                          title='Distribución por Artista',
+                          scale=alt.Scale(
+                              domain=[k for k in artist_colors.keys() if k != 'Todos los artistas'],
+                              range=[v for k, v in artist_colors.items() if k != 'Todos los artistas']
+                          ),
+                          legend=alt.Legend(
+                              labelExpr="datum.label",
+                              labelLimit=300,
+                              titleFontSize=14,
+                              labelFontSize=12
+                          )),
+            tooltip=[
+                alt.Tooltip('artist_name:N', title='Artista'),
+                alt.Tooltip('count:Q', title='Canciones'),
+                alt.Tooltip('percentage:Q', title='Porcentaje', format='.1f')
+            ]
+        )
+        .transform_lookup(
+            lookup='artist_name',
+            from_=alt.LookupData(artist_distribution, 'artist_name', ['label'])
+        )
+        .properties(
+            title={
+                "text": "Distribución de Canciones por Artista",
+                "fontSize": 18
+            },
+            width=600,
+            height=500
+        )
+        .configure_legend(
+            orient='right',
+            titleFontSize=14,
+            labelFontSize=12
+        )
+    )
+    
+    st.altair_chart(pie_chart, use_container_width=True)
     
     # Gráfico 1: Características musicales por artista
     st.subheader("Características Musicales por Artista")
@@ -343,25 +561,67 @@ def pagina_datos():
     # Selector de artista usando Streamlit
     artist_options = ['Todos los artistas'] + sorted([a for a in means['artist_name'].unique() if a != 'Todos los artistas'])
     
-    # Inicializar session_state para el artista si no existe
-    if 'selected_artist_graph1' not in st.session_state:
-        st.session_state.selected_artist_graph1 = 'Todos los artistas'
+    # Inicializar session_state
+    if 'selected_artists_set' not in st.session_state:
+        st.session_state.selected_artists_set = {'Todos los artistas'}
     
-    artist_filter_1 = st.selectbox(
-        "Seleccionar artista:",
-        artist_options,
-        index=artist_options.index(st.session_state.selected_artist_graph1),
-        key='artist_filter_graph1'
-    )
-    st.session_state.selected_artist_graph1 = artist_filter_1
+    if 'reset_version_g1' not in st.session_state:
+        st.session_state.reset_version_g1 = 0
     
-    # Filtrar datos según el artista seleccionado
-    means_long_filtered = means_long[means_long['artist_name'] == artist_filter_1].copy()
+    # Botón de reset y expander
+    col_exp, col_reset = st.columns([4, 1])
     
-    # Crear gráfico con colores específicos
+    with col_reset:
+        if st.button("🔄 Resetear", key='reset_btn_graph1', use_container_width=True):
+            st.session_state.selected_artists_set = {'Todos los artistas'}
+            st.session_state.reset_version_g1 += 1
+            st.rerun()
+    
+    # Lista desplegable con checkboxes
+    with col_exp:
+        with st.expander("📋 Seleccionar artistas para comparar", expanded=False):
+            # Crear checkboxes en columnas
+            num_cols = 3
+            cols = st.columns(num_cols)
+            
+            # Usar reset_version en las keys para forzar recreación
+            for idx, artist in enumerate(artist_options):
+                col_idx = idx % num_cols
+                with cols[col_idx]:
+                    # Verificar si está seleccionado
+                    is_checked = artist in st.session_state.selected_artists_set
+                    
+                    # Crear checkbox con key única que incluye versión de reset
+                    checked = st.checkbox(
+                        artist,
+                        value=is_checked,
+                        key=f'cb_{artist}_g1_v{st.session_state.reset_version_g1}'
+                    )
+                    
+                    # Actualizar el set según el estado del checkbox
+                    if checked and artist not in st.session_state.selected_artists_set:
+                        st.session_state.selected_artists_set.add(artist)
+                    elif not checked and artist in st.session_state.selected_artists_set:
+                        st.session_state.selected_artists_set.discard(artist)
+    
+    # Obtener lista de artistas seleccionados
+    selected_artists = list(st.session_state.selected_artists_set)
+    
+    # Si no hay ninguno seleccionado, seleccionar "Todos los artistas"
+    if not selected_artists:
+        selected_artists = ['Todos los artistas']
+        st.session_state.selected_artists_set = {'Todos los artistas'}
+    
+    # Mostrar artistas seleccionados
+    st.caption(f"Artistas seleccionados: {', '.join(sorted(selected_artists))}")
+    
+    # Filtrar datos según los artistas seleccionados
+    means_long_filtered = means_long[means_long['artist_name'].isin(selected_artists)].copy()
+    
+    # Crear gráfico de líneas con puntos
     chart1 = (
         alt.Chart(means_long_filtered)
-        .mark_bar(size=40)
+        .mark_line(point=True, strokeWidth=3)
         .encode(
             x=alt.X('Feature_Label:N', 
                    title='Características Musicales',
@@ -376,8 +636,7 @@ def pagina_datos():
                           scale=alt.Scale(
                               domain=list(artist_colors.keys()),
                               range=list(artist_colors.values())
-                          ),
-                          legend=None),
+                          )),
             tooltip=[
                 alt.Tooltip('artist_name:N', title='Artista'),
                 alt.Tooltip('Feature_Label:N', title='Característica'),
@@ -386,7 +645,8 @@ def pagina_datos():
         )
         .properties(
             title={
-                "text": "Perfil Musical por Artista"
+                "text": "Comparación de Perfiles Musicales",
+                "subtitle": "Valores normalizados de características musicales por artista"
             },
             width=800,
             height=450
@@ -398,6 +658,9 @@ def pagina_datos():
         .configure_title(
             fontSize=18,
             anchor='start'
+        )
+        .configure_point(
+            size=100
         )
     )
     
@@ -630,21 +893,326 @@ def pagina_datos():
     else:
         st.warning("No hay datos disponibles para esta combinación de filtros.")
 
+def pagina_explicacion():
+    """Documentación técnica del modelo de clasificación"""
+    st.title("Documentación Técnica del Modelo")
+    
+    st.markdown("""
+    Este documento describe el funcionamiento, características y rendimiento del sistema de clasificación 
+    de artistas musicales basado en análisis de señales de audio.
+    """)
+    
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "El Modelo", 
+        "Características",
+        "Rendimiento",
+        "Limitaciones"
+    ])
+    
+    with tab1:
+        st.header("Sistema de Predicción de Artistas Musicales")
+        
+        st.markdown("""
+        ### Funcionalidades de la Aplicación
+        
+        Esta aplicación ofrece dos módulos principales para el análisis y predicción de música:
+        """)
+        
+        st.markdown("""
+        **1. Predictor de Artistas**
+        
+        Permite subir o grabar audio para predecir el artista entre 7 opciones:
+        Taylor Swift, The Beatles, Metallica, Pink Floyd, Guns N' Roses, Daft Punk y One Direction.
+        """)
+        
+        st.markdown("""
+        El sistema analiza las características musicales del audio y proporciona:
+        - Predicción del artista más probable
+        - Probabilidades para cada artista
+        - Análisis de qué características influyeron en la decisión
+        """)
+        
+        st.markdown("""
+        **2. Análisis de Datos**
+        
+        Visualización interactiva del dataset de entrenamiento con gráficos de distribución, 
+        comparación de perfiles musicales entre artistas y análisis de características.
+        """)
+        
+        st.markdown("---")
+        
+        st.subheader("Modelo")
+        
+        st.markdown("""
+        ### Random Forest Classifier
+        
+        El modelo utiliza **Random Forest**, un algoritmo de machine learning que combina múltiples 
+        árboles de decisión para realizar predicciones robustas.
+        
+        **Proceso de predicción:**
+        1. Extracción de 13 características musicales del audio
+        2. Normalización y preprocesamiento de datos
+        3. Análisis mediante Random Forest
+        4. Cálculo de probabilidades para cada artista
+        5. Explicación de la decisión mediante análisis de importancia
+        """)
+    
+    with tab2:
+        st.header("Características del Modelo")
+        
+        st.markdown("""
+        El modelo analiza 13 características extraídas mediante análisis de señales de audio. 
+        Estas características capturan propiedades acústicas, rítmicas y tonales de las canciones.
+        """)
+        
+        st.subheader("Descripción de Características")
+        
+        # Crear tabla de características con descripciones más detalladas
+        features_data = {
+            'Característica': [
+                'Acústica', 'Bailabilidad', 'Energía', 'Instrumental', 
+                'Voz Hablada', 'Valencia', 'En Vivo', 'Volumen',
+                'Tempo', 'Tonalidad', 'Modo', 'Escala', 'Alteraciones'
+            ],
+            'Descripción': [
+                'Mide la probabilidad de que la canción sea acústica, sin instrumentos electrónicos. Valores altos indican uso de instrumentos tradicionales',
+                'Evalúa qué tan adecuada es una canción para bailar, considerando tempo, estabilidad del ritmo y fuerza del beat',
+                'Representa la intensidad y actividad percibida. Canciones energéticas se sienten rápidas, fuertes y ruidosas',
+                'Predice si una canción no contiene voces. Valores superiores a 0.5 indican pistas principalmente instrumentales',
+                'Detecta la presencia de palabras habladas. Valores altos indican contenido hablado como rap, podcast o audiolibros',
+                'Describe la positividad musical transmitida. Valores altos suenan alegres y eufóricos, valores bajos suenan tristes',
+                'Detecta la presencia de audiencia en la grabación. Valores superiores a 0.8 indican alta probabilidad de grabación en vivo',
+                'Volumen general de la canción medido en decibeles. Valores cercanos a 0 indican mayor volumen',
+                'Velocidad o ritmo de la canción medido en beats por minuto (BPM). Indica qué tan rápida o lenta es la canción',
+                'La tonalidad en la que está la canción usando notación Pitch Class (0=C, 1=C#, 2=D, etc.)',
+                'Indica la modalidad de la escala musical. 1 representa modo Mayor (generalmente alegre), 0 representa Menor (melancólico)',
+                'Combinación de tonalidad y modo que define el conjunto de notas utilizadas (ej: C Mayor, A Menor, F# Mayor)',
+                'Cantidad de sostenidos o bemoles en la armadura de clave. 0 indica sin alteraciones (C Mayor, A Menor)'
+            ],
+            'Rango': [
+                '0.0 - 1.0', '0.0 - 1.0', '0.0 - 1.0', '0.0 - 1.0',
+                '0.0 - 1.0', '0.0 - 1.0', '0.0 - 1.0', '-60 a 0 dB',
+                'Variable BPM', '0 - 11', '0 o 1', 'Categórica', '0 - 5'
+            ]
+        }
+        
+        df_features = pd.DataFrame(features_data)
+        
+        # Mostrar tabla sin scroll
+        st.markdown(df_features.to_html(index=False, escape=False), unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        st.subheader("Importancia de Características")
+        
+        st.markdown("""
+        Las siguientes son las 10 características más relevantes para la clasificación, 
+        ordenadas por su importancia en el modelo:
+        """)
+        
+        # Crear DataFrame con las importancias
+        importances_data = {
+            'Característica': [
+                'Volumen', 'Instrumental', 'Energía', 'Acústica', 
+                'Bailabilidad', 'Valencia', 'Voz Hablada', 'En Vivo',
+                'Alteraciones', 'Tempo'
+            ],
+            'Importancia': [
+                0.1573, 0.1293, 0.1161, 0.1135, 0.1036, 0.0893, 
+                0.0611, 0.0464, 0.0442, 0.0362
+            ]
+        }
+        
+        df_imp = pd.DataFrame(importances_data)
+        
+        # Gráfico de importancias
+        chart_imp = (
+            alt.Chart(df_imp)
+            .mark_bar()
+            .encode(
+                x=alt.X('Importancia:Q', title='Importancia Relativa'),
+                y=alt.Y('Característica:N', sort='-x', title=''),
+                color=alt.value('#1f77b4'),
+                tooltip=['Característica', alt.Tooltip('Importancia:Q', format='.4f')]
+            )
+            .properties(
+                title='Top 10 Características Más Importantes',
+                height=400
+            )
+        )
+        
+        st.altair_chart(chart_imp, use_container_width=True)
+    
+    with tab3:
+        st.header("Métricas de Rendimiento")
+        
+        st.markdown("""
+        ### Evaluación en Conjunto de Test
+        
+        El modelo fue evaluado en un conjunto de test independiente (257 muestras, 20% del dataset total) 
+        que no fue utilizado durante el entrenamiento.
+        """)
+        
+        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+        
+        with col_m1:
+            st.metric("Accuracy", "82.88%")
+        
+        with col_m2:
+            st.metric("Precision (macro)", "80.44%")
+        
+        with col_m3:
+            st.metric("Recall (macro)", "80.48%")
+        
+        with col_m4:
+            st.metric("F1-Score (macro)", "80.05%")
+        
+        st.markdown("---")
+        
+        st.subheader("Definición de Métricas")
+        
+        col_def1, col_def2 = st.columns(2)
+        
+        with col_def1:
+            st.markdown("""
+            **Accuracy (Exactitud)**
+            
+            Porcentaje de predicciones correctas sobre el total de predicciones realizadas.
+            """)
+        
+        with col_def2:
+            st.markdown("""
+            **Recall (Sensibilidad)**
+            
+            De todos los casos reales de una clase, cuántos fueron identificados correctamente. 
+            Mide la capacidad del modelo para encontrar todos los casos positivos.
+            """)
+        
+        st.markdown("---")
+        
+        col_def3, col_def4 = st.columns(2)
+        
+        with col_def3:
+            st.markdown("""
+            **Precision (Precisión)**
+            
+            De todas las predicciones positivas para una clase, cuántas fueron correctas. 
+            Mide la calidad de las predicciones positivas.
+            """)
+        
+        with col_def4:
+            st.markdown("""
+            **F1-Score**
+            
+            Media armónica entre Precision y Recall. Proporciona un balance entre ambas métricas.
+            """)
+        
+        st.markdown("---")
+        
+        st.subheader("Rendimiento por Clase")
+        
+        performance_data = {
+            'Artista': ['Metallica', 'Pink Floyd', 'Taylor Swift', 'One Direction', 
+                       'Guns N\' Roses', 'The Beatles', 'Daft Punk'],
+            'Precision': [0.898, 0.744, 0.855, 0.750, 0.889, 0.864, 0.632],
+            'Recall': [0.957, 0.906, 0.903, 0.818, 0.727, 0.691, 0.632],
+            'F1-Score': [0.926, 0.817, 0.878, 0.783, 0.800, 0.768, 0.632]
+        }
+        
+        df_perf = pd.DataFrame(performance_data)
+        
+        st.dataframe(
+            df_perf.style.format({
+                'Precision': '{:.3f}',
+                'Recall': '{:.3f}',
+                'F1-Score': '{:.3f}'
+            }).background_gradient(subset=['F1-Score'], cmap='RdYlGn', vmin=0.6, vmax=1.0),
+            use_container_width=True
+        )
+        
+        st.caption("🟢 Verde: Mejor rendimiento | 🟡 Amarillo: Rendimiento medio | 🔴 Rojo: Menor rendimiento")
+    
+    with tab4:
+        st.header("Limitaciones del Sistema")
+        
+        st.markdown("""
+        ### Restricciones de la API de Análisis
+        
+        El sistema utiliza la API de **ReccoBeats** para extraer las características musicales del audio. 
+        Esta API tiene una limitación importante que afecta la precisión del análisis:
+        """)
+        
+        st.warning("⚠️ La API de ReccoBeats solo acepta archivos de hasta **5 MB**")
+        
+        st.markdown("""
+        ### Impacto en la Predicción
+        
+        Cuando subes o grabas una canción que excede este límite, el sistema automáticamente:
+        
+        1. **Recorta el audio** a aproximadamente 4.9 MB para cumplir con la restricción
+        2. **Analiza solo una porción** de la canción completa
+        3. **Extrae características** basándose en este fragmento reducido
+        
+        #### Consecuencias:
+        
+        - **Análisis incompleto**: Las características musicales se calculan sobre una parte de la canción, 
+          no sobre su totalidad
+        - **Pérdida de contexto**: Secciones importantes como el coro, puente o final pueden quedar fuera del análisis
+        - **Variabilidad en resultados**: Canciones con cambios dinámicos significativos pueden no ser 
+          representadas adecuadamente
+        - **Menor precisión**: La predicción del artista puede ser menos exacta al no considerar 
+          la canción completa
+        
+        El modelo fue entrenado con características extraídas de canciones completas. Por lo tanto, 
+        el análisis de fragmentos puede generar predicciones con menor confianza o precisión comparado 
+        con el rendimiento reportado en las métricas de evaluación.
+        """)
+
+
 def main():
     # Sidebar para navegación
     with st.sidebar:
-        st.title("Navegación")
-        opcion = st.radio(
-            "Selecciona una opción:",
-            ["Predictor", "Análisis de Datos"],
-            label_visibility="collapsed"
-        )
+        st.markdown("""
+        <div style='text-align: center; padding: 20px 0;'>
+            <h2 style='margin: 0;'>🎵 Predictor Musical</h2>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # CSS para forzar botones al 100% del ancho
+        st.markdown("""
+        <style>
+        .stButton button {
+            width: 100%;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        # Inicializar estado de navegación
+        if 'pagina_actual' not in st.session_state:
+            st.session_state.pagina_actual = 'Explicación del Modelo'
+        
+        # Botones de navegación (orden cambiado)
+        if st.button("Explicación del Modelo", use_container_width=True, type="primary" if st.session_state.pagina_actual == 'Explicación del Modelo' else "secondary"):
+            st.session_state.pagina_actual = 'Explicación del Modelo'
+            st.rerun()
+        
+        if st.button("Análisis de Datos", use_container_width=True, type="primary" if st.session_state.pagina_actual == 'Análisis de Datos' else "secondary"):
+            st.session_state.pagina_actual = 'Análisis de Datos'
+            st.rerun()
+        
+        if st.button("Predictor", use_container_width=True, type="primary" if st.session_state.pagina_actual == 'Predictor' else "secondary"):
+            st.session_state.pagina_actual = 'Predictor'
+            st.rerun()
     
     # Mostrar página según selección
-    if opcion == "Predictor":
+    if st.session_state.pagina_actual == "Predictor":
         pagina_predictor()
-    else:
+    elif st.session_state.pagina_actual == "Análisis de Datos":
         pagina_datos()
+    else:
+        pagina_explicacion()
 
 if __name__ == "__main__":
     main()
