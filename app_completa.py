@@ -315,14 +315,17 @@ def pagina_predictor():
                         
                         # Obtener nombres de características después del preprocessing
                         if hasattr(modelo.named_steps['preprocessing'], 'get_feature_names_out'):
-                            feature_names_transformed = modelo.named_steps['preprocessing'].get_feature_names_out()
+                            feature_names_transformed = list(modelo.named_steps['preprocessing'].get_feature_names_out())
                         else:
                             feature_names_transformed = [f"feature_{i}" for i in range(len(shap_vals))]
                         
+                        # Asegurar que shap_vals sea un array 1D
+                        shap_vals_flat = np.array(shap_vals).flatten()
+                        
                         # Crear DataFrame para el gráfico
                         df_shap = pd.DataFrame({
-                            'Feature': feature_names_transformed[:len(shap_vals)],
-                            'SHAP Value': shap_vals
+                            'Feature': feature_names_transformed[:len(shap_vals_flat)],
+                            'SHAP Value': shap_vals_flat
                         })
                         
                         # Simplificar nombres de características
