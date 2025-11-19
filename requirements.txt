@@ -11,3 +11,4 @@ vl-convert-python
 vega_datasets
 audio-recorder-streamlit
 shap
+matplotlib
